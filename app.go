@@ -13,7 +13,7 @@ import (
 type (
   Tweets []Tweet
   Tweet struct {
-    Id        bson.ObjectId `bson:"_id"`
+    Id        bson.ObjectId `bson:"_id,omitempty"`
     Text      string
     Author    string
     Timestamp int64
@@ -31,7 +31,7 @@ var (
 	log = make(log4go.Logger)
 )
 
-func GetTweets(w *rest.ResponseWriter, req *rest.Request) {
+func GetTweets(w *rest.ResponseWriter, r *rest.Request) {
   var (
     tweets Tweets
     err   error
@@ -44,26 +44,56 @@ func GetTweets(w *rest.ResponseWriter, req *rest.Request) {
   w.WriteJson(&tweets)
 }
 
-func GetTweet(w *rest.ResponseWriter, req *rest.Request) {
-  tweet := Tweet{
-    Text: "this is some tweet text",
-    Author: "Lenny Bruce",
-    Timestamp: 12345,
-    Followers: 9,
-    Retweets: 11,
-    Sentiment: "positive",
-    Score: 0.2,
+func GetTweet(w *rest.ResponseWriter, r *rest.Request) {
+  var tweet Tweet
+  if err = collection.FindId(bson.ObjectIdHex(r.PathParam("id"))).One(&tweet); err != nil {
+    rest.NotFound(w, r)
+    return
   }
   w.WriteJson(&tweet)
 }
 
-func PutTweet(w *rest.ResponseWriter, req *rest.Request) {
+func PutTweet(w *rest.ResponseWriter, r *rest.Request) {
+  var tweet Tweet
+  err = r.DecodeJsonPayload(&tweet)
+  if err != nil {
+    rest.Error(w, err.Error(), http.StatusInternalServerError)
+    return
+  }
+  err = collection.Insert(&tweet)
+  if err != nil {
+    rest.Error(w, err.Error(), http.StatusInternalServerError)
+  }
+  // FIXME: Fill in the ID assigned by mongo before returning to user
+  w.WriteJson(&tweet)
 }
 
-func PostTweet(w *rest.ResponseWriter, req *rest.Request) {
+func PostTweet(w *rest.ResponseWriter, r *rest.Request) {
+  var (
+    tweet Tweet
+    changeInfo *mgo.ChangeInfo
+    oid = bson.ObjectIdHex(r.PathParam("id"))
+  )
+  err = r.DecodeJsonPayload(&tweet)
+  if err != nil {
+    rest.Error(w, err.Error(), http.StatusInternalServerError)
+    return
+  }
+  if changeInfo, err = collection.UpsertId(oid, &tweet); err != nil {
+    rest.Error(w, err.Error(), http.StatusInternalServerError)
+    return
+  }
+  fmt.Println(changeInfo)
+  tweet.Id = oid
+  w.WriteJson(&tweet)
 }
 
-func DeleteTweet(w *rest.ResponseWriter, req *rest.Request) {
+func DeleteTweet(w *rest.ResponseWriter, r *rest.Request) {
+  if err = collection.RemoveId(bson.ObjectIdHex(r.PathParam("id"))); err != nil {
+    rest.NotFound(w, r)
+    return
+  }
+  w.WriteHeader(http.StatusOK)
 }
 
 func main() {
@@ -93,7 +123,10 @@ func main() {
   handler := rest.ResourceHandler{}
   handler.SetRoutes(
     rest.Route{"GET", "/tweets", GetTweets},
+    rest.Route{"PUT", "/tweets", PutTweet},
     rest.Route{"GET", "/tweets/:id", GetTweet},
+    rest.Route{"POST", "/tweets/:id", PostTweet},
+    rest.Route{"DELETE", "/tweets/:id", DeleteTweet},
   )
   log.Debug("Listening at port %v\n", port)
   if err := http.ListenAndServe(":"+port, &handler); err != nil {
