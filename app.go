@@ -16,7 +16,7 @@ type (
     Id        bson.ObjectId `bson:"_id,omitempty"`
     Text      string
     Author    string
-    Timestamp int64
+    Timestamp string
     Followers int64
     Retweets  int64
     Sentiment string
